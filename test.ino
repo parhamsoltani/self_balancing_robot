@@ -9,8 +9,8 @@
 
 #include <WiFi.h> // Include Wi-Fi library
 
-const char* ssid = "Kiarash phone";         // Replace with your Wi-Fi SSID
-const char* password = "Kiarash1"; // Replace with your Wi-Fi password
+const char* ssid = "Parham's iPhone";         // Replace with your Wi-Fi SSID
+const char* password = "levid1"; // Replace with your Wi-Fi password
 
 //void PID::Compute()
 //{
