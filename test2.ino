@@ -1,10 +1,8 @@
-#include <Arduino.h>
+#include <Wire.h>
 #include <I2Cdev.h>
 #include <MPU6050_6Axis_MotionApps20.h>
-
-#if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
-    #include "Wire.h"
-#endif
+#include <LMotorController.h>
+#include <Arduino.h>
 
 class PID {
 public:
@@ -19,7 +17,6 @@ public:
 private:
     double *myInput, *myOutput, *mySetpoint;
     double kp, ki, kd;
-    double dispKp, dispKi, dispKd;
     double ITerm, lastInput;
     unsigned long lastTime;
     unsigned long SampleTime;
@@ -32,10 +29,112 @@ private:
 #define MANUAL 0
 #define DIRECT 0
 #define REVERSE 1
+
+PID::PID(double* Input, double* Output, double* Setpoint, double Kp, double Ki, double Kd, int ControllerDirection) {
+    myInput = Input;
+    myOutput = Output;
+    mySetpoint = Setpoint;
+
+    inAuto = false;
+
+    PID::SetOutputLimits(0, 255); // Default output limits
+    SampleTime = 100;             // Default sample time is 100ms
+
+    PID::SetControllerDirection(ControllerDirection);
+    PID::SetTunings(Kp, Ki, Kd);
+
+    lastTime = millis() - SampleTime;
+}
+
+void PID::Compute() {
+    if (!inAuto) return;
+
+    unsigned long now = millis();
+    unsigned long timeChange = (now - lastTime);
+
+    if (timeChange >= SampleTime) {
+        double input = *myInput;
+        double error = *mySetpoint - input;
+        
+        ITerm += (ki * error);
+        if (ITerm > outMax) ITerm = outMax;
+        else if (ITerm < outMin) ITerm = outMin;
+
+        double dInput = (input - lastInput);
+
+        double output = kp * error + ITerm - kd * dInput;
+        if (output > outMax) output = outMax;
+        else if (output < outMin) output = outMin;
+
+        *myOutput = output;
+
+        lastInput = input;
+        lastTime = now;
+    }
+}
+
+void PID::SetTunings(double Kp, double Ki, double Kd) {
+    if (Kp < 0 || Ki < 0 || Kd < 0) return;
+
+    double SampleTimeInSec = ((double)SampleTime) / 1000;
+    kp = Kp;
+    ki = Ki * SampleTimeInSec;
+    kd = Kd / SampleTimeInSec;
+
+    if (controllerDirection == REVERSE) {
+        kp = -kp;
+        ki = -ki;
+        kd = -kd;
+    }
+}
+
+void PID::SetSampleTime(int NewSampleTime) {
+    if (NewSampleTime > 0) {
+        double ratio = (double)NewSampleTime / (double)SampleTime;
+        ki *= ratio;
+        kd /= ratio;
+        SampleTime = (unsigned long)NewSampleTime;
+    }
+}
+
+void PID::SetOutputLimits(double Min, double Max) {
+    if (Min >= Max) return;
+    outMin = Min;
+    outMax = Max;
+
+    if (inAuto) {
+        if (*myOutput > outMax) *myOutput = outMax;
+        else if (*myOutput < outMin) *myOutput = outMin;
+
+        if (ITerm > outMax) ITerm = outMax;
+        else if (ITerm < outMin) ITerm = outMin;
+    }
+}
+
+void PID::SetMode(int Mode) {
+    bool newAuto = (Mode == AUTOMATIC);
+    if (newAuto && !inAuto) {
+        ITerm = *myOutput;
+        lastInput = *myInput;
+        if (ITerm > outMax) ITerm = outMax;
+        else if (ITerm < outMin) ITerm = outMin;
+    }
+    inAuto = newAuto;
+}
+
+void PID::SetControllerDirection(int Direction) {
+    if (inAuto && Direction != controllerDirection) {
+        kp = -kp;
+        ki = -ki;
+        kd = -kd;
+    }
+    controllerDirection = Direction;
+}
+
 #define MIN_ABS_SPEED 30
 
-// MPU6050 and motor control variables
 MPU6050 mpu;
+
 bool dmpReady = false;
 uint8_t mpuIntStatus;
 uint8_t devStatus;
@@ -43,111 +142,31 @@ uint16_t packetSize;
 uint16_t fifoCount;
 uint8_t fifoBuffer[64];
 
-// Orientation/motion vars
 Quaternion q;
 VectorFloat gravity;
 float ypr[3];
 
-// PID and motor control variables
-double originalSetpoint = 165;
-double setpoint = originalSetpoint;
-double input, output;
-double motorSpeedFactorLeft = 1;
-double motorSpeedFactorRight = 1;
+// PID setup
+const double Kp = 29, Ki = 1300, Kd = 3;
+double input, output, setpoint = 165;
+PID pid(&input, &output, &setpoint, Kp, Ki, Kd, DIRECT);
 
-// Motor pins
-const int ENA = 32;
-const int IN1 = 25;
-const int IN2 = 33;
-const int IN3 = 27;
-const int IN4 = 26;
-const int ENB = 14;
+int ENA = 32, IN1 = 25, IN2 = 33, IN3 = 27, IN4 = 26, ENB = 14;
+double motorSpeedFactorLeft = 1, motorSpeedFactorRight = 1;
+LMotorController motorController(ENA, IN1, IN2, ENB, IN3, IN4, motorSpeedFactorLeft, motorSpeedFactorRight);
 
-// Create PID instance
-PID pid(&input, &output, &setpoint, 29, 1300, 5, DIRECT);
-
-// MPU interrupt detection routine
 volatile bool mpuInterrupt = false;
 void dmpDataReady() {
     mpuInterrupt = true;
 }
 
-// Implementation of PID methods (same as in your first code)
-[Previous PID implementation methods remain the same]
-
-class LMotorController {
-public:
-    LMotorController(int ena, int in1, int in2, int enb, int in3, int in4, double speedFactorLeft, double speedFactorRight) {
-        _ena = ena;
-        _in1 = in1;
-        _in2 = in2;
-        _enb = enb;
-        _in3 = in3;
-        _in4 = in4;
-        _speedFactorLeft = speedFactorLeft;
-        _speedFactorRight = speedFactorRight;
-        
-        pinMode(_ena, OUTPUT);
-        pinMode(_in1, OUTPUT);
-        pinMode(_in2, OUTPUT);
-        pinMode(_enb, OUTPUT);
-        pinMode(_in3, OUTPUT);
-        pinMode(_in4, OUTPUT);
-    }
-
-    void move(int leftSpeed, int rightSpeed, int minAbsSpeed) {
-        if (leftSpeed < 0) {
-            leftSpeed = min(leftSpeed, -minAbsSpeed);
-            leftSpeed = max(leftSpeed, -255);
-            digitalWrite(_in1, LOW);
-            digitalWrite(_in2, HIGH);
-            analogWrite(_ena, abs(leftSpeed) * _speedFactorLeft);
-        } else {
-            leftSpeed = max(leftSpeed, minAbsSpeed);
-            leftSpeed = min(leftSpeed, 255);
-            digitalWrite(_in1, HIGH);
-            digitalWrite(_in2, LOW);
-            analogWrite(_ena, leftSpeed * _speedFactorLeft);
-        }
-
-        if (rightSpeed < 0) {
-            rightSpeed = min(rightSpeed, -minAbsSpeed);
-            rightSpeed = max(rightSpeed, -255);
-            digitalWrite(_in3, LOW);
-            digitalWrite(_in4, HIGH);
-            analogWrite(_enb, abs(rightSpeed) * _speedFactorRight);
-        } else {
-            rightSpeed = max(rightSpeed, minAbsSpeed);
-            rightSpeed = min(rightSpeed, 255);
-            digitalWrite(_in3, HIGH);
-            digitalWrite(_in4, LOW);
-            analogWrite(_enb, rightSpeed * _speedFactorRight);
-        }
-    }
-
-    void move(int speed, int minAbsSpeed) {
-        move(speed, speed, minAbsSpeed);
-    }
-
-private:
-    int _ena, _in1, _in2, _enb, _in3, _in4;
-    double _speedFactorLeft, _speedFactorRight;
-};
-
-LMotorController motorController(ENA, IN1, IN2, ENB, IN3, IN4, motorSpeedFactorLeft, motorSpeedFactorRight);
-
 void setup() {
-    #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
-        Wire.begin();
-        Wire.setClock(400000L);
-    #elif I2CDEV_IMPLEMENTATION == I2CDEV_BUILTIN_FASTWIRE
-        Fastwire::setup(400, true);
-    #endif
+    Wire.begin();
+    Wire.setClock(400000L);
 
     mpu.initialize();
     devStatus = mpu.dmpInitialize();
 
-    // Set gyro offsets
     mpu.setXGyroOffset(-0.21);
     mpu.setYGyroOffset(0.56);
     mpu.setZGyroOffset(0.17);
@@ -160,10 +179,13 @@ void setup() {
         dmpReady = true;
         packetSize = mpu.dmpGetFIFOPacketSize();
 
-        // Initialize PID
         pid.SetMode(AUTOMATIC);
         pid.SetSampleTime(10);
         pid.SetOutputLimits(-255, 255);
+    } else {
+        Serial.print(F("DMP Initialization failed (code "));
+        Serial.print(devStatus);
+        Serial.println(F(")"));
     }
 }
 
@@ -181,14 +203,17 @@ void loop() {
 
     if ((mpuIntStatus & 0x10) || fifoCount == 1024) {
         mpu.resetFIFO();
+        Serial.println(F("FIFO overflow!"));
     } else if (mpuIntStatus & 0x02) {
         while (fifoCount < packetSize) fifoCount = mpu.getFIFOCount();
+
         mpu.getFIFOBytes(fifoBuffer, packetSize);
         fifoCount -= packetSize;
 
         mpu.dmpGetQuaternion(&q, fifoBuffer);
         mpu.dmpGetGravity(&gravity, &q);
         mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
-        input = ypr[1] * 180/M_PI + 180;
+
+        input = ypr[1] * 180 / M_PI + 180;
     }
 }
