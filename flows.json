@@ -1,0 +1,49 @@
+[
+    {
+        "id": "94d4c4fac48926fd",
+        "type": "ui_button",
+        "z": "b0065e77274b91e0",
+        "name": "Forward",
+        "group": "1af4e8d60d220f21",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "button",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "payload": "1",
+        "payloadType": "num",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 380,
+        "y": 560,
+        "wires": [
+            [
+                "c2cfe27c1426a02d"
+            ]
+        ]
+    },
+    {
+        "id": "1af4e8d60d220f21",
+        "type": "ui_group",
+        "name": "Forward",
+        "tab": "1ef19e53c11a7c0c",
+        "order": 5,
+        "disp": true,
+        "width": "6",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "1ef19e53c11a7c0c",
+        "type": "ui_tab",
+        "name": "Home",
+        "icon": "dashboard",
+        "disabled": false,
+        "hidden": false
+    }
+]
